@@ -289,6 +289,38 @@ def measure_top_y_px(mask: np.ndarray, xs: list[int]) -> list[int | None]:
     return top_ys
 
 
+def perfil_grade(
+    mask: np.ndarray, y_chao: int, px_por_cm: float, passo_cm: float,
+) -> tuple[list[int], list[int]]:
+    """Topo do verde em cada coluna da grade calibrada.
+
+    Retorna (xs, alturas): o x em pixel de cada coluna e a altura dela em
+    pontos da grade. É a "nuvem de pontos" que o teorema de Pick conta.
+    """
+    largura_frame = mask.shape[1]
+    px_por_ponto = px_por_cm * passo_cm
+    n_colunas = int((largura_frame - 1) // px_por_ponto) + 1
+    xs = [round(i * px_por_ponto) for i in range(n_colunas)]
+    alturas = [
+        pick.altura_em_pontos(y, y_chao, px_por_ponto)
+        for y in measure_top_y_px(mask, xs)
+    ]
+    return xs, alturas
+
+
+def limites_faixas(n_colunas: int, n_faixas: int) -> list[tuple[int, int]]:
+    """Divide as colunas da grade em faixas [(col_ini, col_fim)] inclusivas.
+
+    Faixas vizinhas compartilham a coluna da divisa. Limita `n_faixas` ao
+    número de colunas - 1; lista vazia se houver menos de 2 colunas.
+    """
+    if n_colunas < 2:
+        return []
+    n_faixas = max(1, min(n_faixas, n_colunas - 1))
+    limites = [round(k * (n_colunas - 1) / n_faixas) for k in range(n_faixas + 1)]
+    return list(zip(limites, limites[1:]))
+
+
 def medir_faixas_pick(
     mask: np.ndarray,
     y_chao: int,
@@ -303,21 +335,10 @@ def medir_faixas_pick(
     Retorna [(x_ini_px, x_fim_px, altura_cm)]. Lista vazia se o frame
     não tiver ao menos 2 colunas da grade.
     """
-    largura_frame = mask.shape[1]
-    px_por_ponto = px_por_cm * passo_cm
-    n_colunas = int((largura_frame - 1) // px_por_ponto) + 1
-    if n_colunas < 2:
-        return []
-    n_faixas = max(1, min(n_faixas, n_colunas - 1))
-    xs = [round(i * px_por_ponto) for i in range(n_colunas)]
-    alturas = [
-        pick.altura_em_pontos(y, y_chao, px_por_ponto)
-        for y in measure_top_y_px(mask, xs)
-    ]
-    limites = [round(k * (n_colunas - 1) / n_faixas) for k in range(n_faixas + 1)]
+    xs, alturas = perfil_grade(mask, y_chao, px_por_cm, passo_cm)
     return [
         (xs[a], xs[b], pick.altura_media_cm(alturas[a:b + 1], passo_cm))
-        for a, b in zip(limites, limites[1:])
+        for a, b in limites_faixas(len(xs), n_faixas)
     ]
 
 

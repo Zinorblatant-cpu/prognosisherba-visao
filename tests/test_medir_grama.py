@@ -234,6 +234,20 @@ def test_medir_faixas_pick_frame_estreito_reduz_faixas():
     assert len(faixas) == 2
 
 
+def test_perfil_grade_amostra_cada_coluna_da_grade():
+    mask = np.zeros((100, 9), np.uint8)
+    mask[80:100, 4] = 255  # 20 px acima do chão = 5 pontos de 4 px
+    xs, alturas = medir_grama.perfil_grade(mask, 100, 8.0, 0.5)
+    assert xs == [0, 4, 8]
+    assert alturas == [0, 5, 0]
+
+
+def test_limites_faixas():
+    assert medir_grama.limites_faixas(9, 4) == [(0, 2), (2, 4), (4, 6), (6, 8)]
+    assert medir_grama.limites_faixas(3, 8) == [(0, 1), (1, 2)]
+    assert medir_grama.limites_faixas(1, 8) == []
+
+
 def test_print_report_mostra_grama_maior(capsys):
     medir_grama.print_report([5.0], 5.0, None, "MÉDIA", (4, 10.0), 8)
     assert "Grama maior (Pick): 10,0 cm (faixa 5/8)" in capsys.readouterr().out

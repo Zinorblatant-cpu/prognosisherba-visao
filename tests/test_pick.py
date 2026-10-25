@@ -59,6 +59,21 @@ def test_area_perfil_pick_igual_trapezios(alturas):
     assert pick.area_perfil_pick(alturas) == pytest.approx(_trapezios(alturas))
 
 
+def test_pick_perfil_conta_pontos_e_poligonos():
+    # Retângulo 2x3 (colunas 0..2, altura 3): I = 1*2 = 2, B = 10 → 2 + 5 - 1 = 6
+    r = pick.pick_perfil([3, 3, 3])
+    assert (r["interiores"], r["borda"], r["poligonos"]) == (2, 10, 1)
+    assert r["area"] == 6
+    # Dois tufos separados por um zero: dois polígonos
+    assert pick.pick_perfil([2, 0, 2])["poligonos"] == 2
+
+
+def test_pick_perfil_sem_grama():
+    assert pick.pick_perfil([0, 0]) == {
+        "area": 0, "interiores": 0, "borda": 0, "poligonos": 0,
+    }
+
+
 def test_altura_media_cm_perfil_plano():
     # 10 pontos de altura com passo 0,5 cm → 5 cm
     assert pick.altura_media_cm([10] * 6, 0.5) == pytest.approx(5.0)

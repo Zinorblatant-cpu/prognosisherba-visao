@@ -130,14 +130,17 @@ def area_pick(vertices: list[tuple[int, int]]) -> float:
     return pontos_interiores(v) + pontos_na_borda(v) / 2 - 1
 
 
-def area_perfil_pick(alturas: list[int]) -> float:
-    """Área sob um perfil de alturas em colunas consecutivas da grade.
+def pick_perfil(alturas: list[int]) -> dict:
+    """Teorema de Pick sobre um perfil de alturas em colunas consecutivas.
 
     Cada trecho contínuo com altura > 0 vira um polígono separado, fechado
     no chão nas colunas vizinhas com altura 0. Assim nenhum polígono encosta
     em si mesmo no chão (Pick exige polígono simples).
+
+    Retorna {"area", "interiores", "borda", "poligonos"}, com
+    area = interiores + borda/2 - poligonos (Pick somado por polígono).
     """
-    total = 0.0
+    interiores = borda = poligonos = 0
     n = len(alturas)
     k = 0
     while k < n:
@@ -153,8 +156,23 @@ def area_perfil_pick(alturas: list[int]) -> float:
         vertices = [(x_esq, 0)]
         vertices.extend((x, alturas[x]) for x in range(ini, fim + 1))
         vertices.append((x_dir, 0))
-        total += area_pick(vertices)
-    return total
+        if area_pick(vertices) == 0:
+            continue  # coluna isolada na borda do frame: segmento, sem área
+        v = _limpar_vertices(vertices)
+        interiores += pontos_interiores(v)
+        borda += pontos_na_borda(v)
+        poligonos += 1
+    return {
+        "area": interiores + borda / 2 - poligonos,
+        "interiores": interiores,
+        "borda": borda,
+        "poligonos": poligonos,
+    }
+
+
+def area_perfil_pick(alturas: list[int]) -> float:
+    """Área (unidades de grade²) sob um perfil de alturas. Ver pick_perfil."""
+    return pick_perfil(alturas)["area"]
 
 
 def altura_media_cm(alturas: list[int], passo_cm: float) -> float:
