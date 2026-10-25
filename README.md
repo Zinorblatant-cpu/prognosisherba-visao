@@ -97,6 +97,10 @@ Pipeline determinístico rodando na estação, do frame ao POST:
 - **MEDIA** — 3 cm < altura ≤ 7 cm
 - **ALTA** — altura > 7 cm
 
+**Grade em cm.** A calibração grava em `calibration.json` uma grade de pontos com passo de 0,5 cm. A origem fica no chão: x = 0 na borda esquerda, altura = 0 na linha do chão. Com isso, cada pixel tem uma distância conhecida (`pick.pixel_para_cm`). Na tela de confirmação do `calibrar.py`, a grade aparece desenhada e, ao passar o mouse, aparece a distância do ponto mais próximo (`x=12,5cm  altura=+3,0cm`).
+
+**Grama maior (teorema de Pick).** O frame é dividido em 8 faixas verticais. Em cada faixa, o topo do verde em cada coluna da grade forma um polígono com vértices em pontos da grade. A área sai do teorema de Pick, **A = I + B/2 − 1** (I = pontos dentro, B = pontos na borda), e a altura da faixa é área ÷ largura. A faixa mais alta é a "grama maior". Ela aparece no terminal e no PNG de debug; o valor enviado à API continua sendo a mediana das 3 colunas.
+
 ---
 
 ## 🏗️ Arquitetura
@@ -415,6 +419,7 @@ Aliases legados de `/leituras` continuam respondendo (ocultos do Swagger). Serã
 ├── medir_grama.py            # captura + classificação + envio (cron)
 ├── camera.py                 # detecção de backend/index por plataforma (MSMF/V4L2)
 ├── clima.py                  # cliente Open-Meteo, mapa WMO → PT-BR
+├── pick.py                   # grade em cm + teorema de Pick (grama maior)
 │
 ├── scripts/
 │   ├── seed_exemplos.py     # 21 pontos de demo (--confirm-prod obrigatório)
@@ -423,10 +428,11 @@ Aliases legados de `/leituras` continuam respondendo (ocultos do Swagger). Serã
 ├── tests/                    # ~190 testes, todos com Postgres real na branch test
 │   ├── conftest.py          # fixtures: pool session-scoped, truncate por teste
 │   ├── test_api.py          # 53
-│   ├── test_medir_grama.py  # 88
+│   ├── test_medir_grama.py  # 94
 │   ├── test_db.py           # 15
-│   ├── test_calibrar.py     # 15
+│   ├── test_calibrar.py     # 17
 │   ├── test_camera.py       # 8
+│   ├── test_pick.py         # 17
 │   ├── test_clima.py        # 4
 │   └── test_backup.py       # 7
 │
@@ -462,9 +468,10 @@ Cobertura por área:
 | arquivo | testes | foco |
 |---|---:|---|
 | `test_api.py` | 53 | endpoints, auth, validações, headers |
-| `test_medir_grama.py` | 88 | pipeline de visão, envio, argparse |
+| `test_medir_grama.py` | 94 | pipeline de visão, envio, argparse |
 | `test_db.py` | 15 | schema, rename, constraints, generated columns |
-| `test_calibrar.py` | 15 | matemática pura + I/O do JSON |
+| `test_calibrar.py` | 17 | matemática pura, grade em cm + I/O do JSON |
+| `test_pick.py` | 17 | teorema de Pick, perfil por faixa, conversão pixel ↔ cm |
 | `test_camera.py` | 8 | overrides via env |
 | `test_backup.py` | 7 | CSV/SQL/XLSX, sanitização de nomes |
 | `test_clima.py` | 4 | mapa WMO, fallback em erro |

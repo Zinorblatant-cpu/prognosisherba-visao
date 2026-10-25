@@ -13,6 +13,7 @@ import requests
 from dotenv import load_dotenv
 
 import camera
+import pick
 from clima import SP_LAT, SP_LON, buscar_clima
 
 load_dotenv()
@@ -24,6 +25,7 @@ FRAME_COUNT = 5
 HSV_LOWER = (35, 40, 40)
 HSV_UPPER = (85, 255, 255)
 SAMPLE_COLS = (0.25, 0.50, 0.75)
+N_FAIXAS = 8  # faixas verticais medidas pelo teorema de Pick (grama maior)
 LEVEL_NAMES = ("AUSENTE", "BAIXA", "MÉDIA", "ALTA")
 # Cores BGR (OpenCV) por nível — usado na legenda do preview e nas bolinhas do PNG.
 LEVEL_COLORS_BGR = (
@@ -75,6 +77,11 @@ def load_calibration(path: str) -> dict:
         raise RuntimeError(f"{path}: px_por_cm deve ser número > 0")
     if not isinstance(data["y_chao"], int) or data["y_chao"] < 0:
         raise RuntimeError(f"{path}: y_chao deve ser inteiro >= 0")
+    # Opcional: estações calibradas antes da grade usam pick.PASSO_GRADE_CM.
+    if "grade" in data:
+        passo = data["grade"].get("passo_cm") if isinstance(data["grade"], dict) else None
+        if not isinstance(passo, (int, float)) or passo <= 0:
+            raise RuntimeError(f"{path}: grade.passo_cm deve ser número > 0")
     return data
 
 
@@ -269,17 +276,61 @@ def median_stack(masks: list[np.ndarray]) -> np.ndarray:
 
 def measure_top_y(mask: np.ndarray, col_fractions: tuple[float, ...]) -> list[int | None]:
     """Retorna Y do primeiro pixel verde de cima em cada coluna, ou None se vazio."""
-    _altura_frame, largura_frame = mask.shape[:2]
+    largura_frame = mask.shape[1]
+    return measure_top_y_px(mask, [int(largura_frame * f) for f in col_fractions])
+
+
+def measure_top_y_px(mask: np.ndarray, xs: list[int]) -> list[int | None]:
+    """Igual a measure_top_y, mas com as colunas já em pixel."""
     top_ys: list[int | None] = []
-    for frac in col_fractions:
-        x = int(largura_frame * frac)
-        coluna = mask[:, x]
-        indices = np.where(coluna == 255)[0]
-        if indices.size == 0:
-            top_ys.append(None)
-        else:
-            top_ys.append(int(indices[0]))
+    for x in xs:
+        indices = np.where(mask[:, x] == 255)[0]
+        top_ys.append(int(indices[0]) if indices.size else None)
     return top_ys
+
+
+def medir_faixas_pick(
+    mask: np.ndarray,
+    y_chao: int,
+    px_por_cm: float,
+    passo_cm: float,
+    n_faixas: int,
+) -> list[tuple[int, int, float]]:
+    """Altura média de cada faixa vertical via teorema de Pick.
+
+    Amostra o topo do verde em cada coluna da grade calibrada, divide as
+    colunas em `n_faixas` e, em cada faixa, calcula área ÷ largura.
+    Retorna [(x_ini_px, x_fim_px, altura_cm)]. Lista vazia se o frame
+    não tiver ao menos 2 colunas da grade.
+    """
+    largura_frame = mask.shape[1]
+    px_por_ponto = px_por_cm * passo_cm
+    n_colunas = int((largura_frame - 1) // px_por_ponto) + 1
+    if n_colunas < 2:
+        return []
+    n_faixas = max(1, min(n_faixas, n_colunas - 1))
+    xs = [round(i * px_por_ponto) for i in range(n_colunas)]
+    alturas = [
+        pick.altura_em_pontos(y, y_chao, px_por_ponto)
+        for y in measure_top_y_px(mask, xs)
+    ]
+    limites = [round(k * (n_colunas - 1) / n_faixas) for k in range(n_faixas + 1)]
+    return [
+        (xs[a], xs[b], pick.altura_media_cm(alturas[a:b + 1], passo_cm))
+        for a, b in zip(limites, limites[1:])
+    ]
+
+
+def grama_maior(
+    faixas: list[tuple[int, int, float]],
+) -> tuple[int, float] | None:
+    """(índice, altura_cm) da faixa mais alta. None se nenhuma tem grama."""
+    if not faixas:
+        return None
+    indice = max(range(len(faixas)), key=lambda k: faixas[k][2])
+    if faixas[indice][2] <= 0:
+        return None
+    return indice, faixas[indice][2]
 
 
 def margem_erro_cm(alturas_cm: list[float | None]) -> float | None:
@@ -316,11 +367,18 @@ def print_report(
     altura_mediana_cm: float | None,
     margem_cm: float | None,
     categoria: str,
+    maior: tuple[int, float] | None = None,
+    n_faixas: int = N_FAIXAS,
 ) -> None:
     formatadas = [_formatar_cm(a) for a in alturas_cm]
     print(f"Alturas por coluna: {formatadas}")
     print(f"Altura mediana:     {_formatar_mediana_com_margem(altura_mediana_cm, margem_cm)}")
     print(f"Categoria:          {categoria}")
+    if maior is None:
+        print("Grama maior (Pick): —")
+    else:
+        print(f"Grama maior (Pick): {_formatar_cm(maior[1])} "
+              f"(faixa {maior[0] + 1}/{n_faixas})")
 
 
 def save_debug(
@@ -335,6 +393,7 @@ def save_debug(
     px_por_cm: float,
     categoria: str,
     path: str,
+    faixas: list[tuple[int, int, float]] | None = None,
 ) -> None:
     try:
         annotated = frame_bgr.copy()
@@ -364,6 +423,19 @@ def save_debug(
                     annotated, label, (x + 8, y_topo - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor, 1,
                 )
+
+        # Faixa mais alta (Pick): segmento na altura média da faixa
+        maior = grama_maior(faixas or [])
+        if maior is not None:
+            x_ini, x_fim, altura_faixa = faixas[maior[0]]
+            y_faixa = round(y_chao - altura_faixa * px_por_cm)
+            cv2.line(annotated, (x_ini, y_faixa), (x_fim, y_faixa),
+                     (255, 255, 255), 2)
+            cv2.putText(
+                annotated, f"maior {_formatar_cm(altura_faixa)}",
+                (x_ini, max(y_faixa - 6, 12)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
+            )
 
         # Régua vertical de referência no canto direito (marcas 1 em 1 cm até 10)
         _desenhar_regua(annotated, y_chao, px_por_cm, altura_frame, largura_frame)
@@ -502,6 +574,9 @@ def main(argv: list[str] | None = None) -> int:
         y_chao = calibration["y_chao"]
         px_por_cm = float(calibration["px_por_cm"])
         regiao_da_estacao = calibration.get("regiao")
+        passo_cm = float(
+            calibration.get("grade", {}).get("passo_cm", pick.PASSO_GRADE_CM)
+        )
         if not args.auto:
             if not preview_camera(
                 CAMERA_INDEX, CAMERA_BACKEND, SAMPLE_COLS,
@@ -519,12 +594,14 @@ def main(argv: list[str] | None = None) -> int:
             alturas_cm, FAIXA_BAIXA_CM, FAIXA_MEDIA_CM,
         )
         margem = margem_erro_cm(alturas_cm)
-        print_report(alturas_cm, altura_mediana, margem, categoria)
+        faixas = medir_faixas_pick(mask, y_chao, px_por_cm, passo_cm, N_FAIXAS)
+        print_report(alturas_cm, altura_mediana, margem, categoria,
+                     grama_maior(faixas), len(faixas))
         if nivel == 0:
             print("AVISO: nenhuma grama detectada no frame", file=sys.stderr)
         save_debug(
             frames[-1], mask, top_ys, alturas_cm, altura_mediana, margem,
-            SAMPLE_COLS, y_chao, px_por_cm, categoria, DEBUG_PATH,
+            SAMPLE_COLS, y_chao, px_por_cm, categoria, DEBUG_PATH, faixas,
         )
         print(f"OK: {DEBUG_PATH} salvo")
         enviar_medicao(altura_mediana, categoria, regiao_da_estacao)

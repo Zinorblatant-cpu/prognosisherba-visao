@@ -50,6 +50,7 @@ def test_montar_calibration_dict_contem_todos_os_campos():
     assert "created_at" in data
     # ISO 8601 tem "T" separando data e hora
     assert "T" in data["created_at"]
+    assert data["grade"]["passo_cm"] == 0.5
 
 
 def test_montar_calibration_dict_inclui_regiao_quando_passada():
@@ -111,3 +112,17 @@ def test_salvar_calibration_uses_utf8_encoding(tmp_path):
     calibrar.salvar_calibration(data, str(path))
     loaded = json.loads(path.read_text(encoding="utf-8"))
     assert loaded["px_por_cm"] == 8.0
+
+
+def test_montar_grade_cobre_o_frame():
+    # 8 px/cm, passo 0,5 cm → 4 px por ponto
+    grade = calibrar.montar_grade(8.0, 420, (640, 480), 0.5)
+    assert grade["px_por_ponto"] == 4.0
+    assert grade["origem_px"] == [0, 420]
+    assert grade["colunas"] == 160      # x = 0, 4, ..., 636
+    assert grade["linhas_acima_chao"] == 105
+
+
+def test_montar_grade_passo_invalido_raises():
+    with pytest.raises(ValueError, match="passo_cm"):
+        calibrar.montar_grade(8.0, 420, (640, 480), 0.0)

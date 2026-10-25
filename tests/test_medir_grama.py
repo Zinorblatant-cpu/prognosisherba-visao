@@ -66,6 +66,23 @@ def test_load_calibration_invalid_px_por_cm_raises(tmp_path):
         medir_grama.load_calibration(str(path))
 
 
+def test_load_calibration_aceita_grade(tmp_path):
+    path = tmp_path / "calibration.json"
+    data = _valid_calibration_dict()
+    data["grade"] = {"passo_cm": 0.5}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert medir_grama.load_calibration(str(path))["grade"]["passo_cm"] == 0.5
+
+
+def test_load_calibration_grade_com_passo_invalido_raises(tmp_path):
+    path = tmp_path / "calibration.json"
+    data = _valid_calibration_dict()
+    data["grade"] = {"passo_cm": 0}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="passo_cm"):
+        medir_grama.load_calibration(str(path))
+
+
 # --- y_para_altura_cm --------------------------------------------------------
 def test_y_para_altura_cm_normal():
     # y_topo=340, y_chao=420, px_por_cm=8 → (420-340)/8 = 10.0 cm
@@ -188,6 +205,38 @@ def test_measure_top_y_returns_ints_not_numpy_scalars():
     mask[70:100, 50] = 255
     result = medir_grama.measure_top_y(mask, (0.50,))
     assert isinstance(result[0], int)
+
+
+# --- medir_faixas_pick / grama_maior -----------------------------------------
+def test_medir_faixas_pick_acha_a_faixa_mais_alta():
+    # 8 px/cm, passo 0,5 cm → 1 ponto a cada 4 px. Frame 321 px = 81 colunas.
+    mask = np.zeros((400, 321), np.uint8)
+    mask[360:400, :] = 255     # grama baixa em tudo: 5 cm (chão em y=400)
+    mask[320:400, 160:201] = 255  # tufo de 10 cm cobrindo a faixa 5 inteira
+    faixas = medir_grama.medir_faixas_pick(mask, 400, 8.0, 0.5, 8)
+    assert len(faixas) == 8
+    assert faixas[0] == (0, 40, pytest.approx(5.0))
+    indice, altura = medir_grama.grama_maior(faixas)
+    assert indice == 4
+    assert altura == pytest.approx(10.0)
+
+
+def test_medir_faixas_pick_sem_grama():
+    mask = np.zeros((400, 321), np.uint8)
+    faixas = medir_grama.medir_faixas_pick(mask, 400, 8.0, 0.5, 8)
+    assert all(a == 0 for _, _, a in faixas)
+    assert medir_grama.grama_maior(faixas) is None
+
+
+def test_medir_faixas_pick_frame_estreito_reduz_faixas():
+    mask = np.zeros((100, 9), np.uint8)  # 3 colunas da grade → 2 faixas
+    faixas = medir_grama.medir_faixas_pick(mask, 100, 8.0, 0.5, 8)
+    assert len(faixas) == 2
+
+
+def test_print_report_mostra_grama_maior(capsys):
+    medir_grama.print_report([5.0], 5.0, None, "MÉDIA", (4, 10.0), 8)
+    assert "Grama maior (Pick): 10,0 cm (faixa 5/8)" in capsys.readouterr().out
 
 
 # --- median_stack ------------------------------------------------------------
